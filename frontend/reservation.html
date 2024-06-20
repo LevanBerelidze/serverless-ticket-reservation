@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Reserve seats</title>
+        <link
+            href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/css/bootstrap.min.css"
+            rel="stylesheet"
+            integrity="sha384-EVSTQN3/azprG1Anm3QDgpJLIm9Nao0Yz1ztcQTwFspd3yD65VohhpuuCOmLASjC"
+            crossorigin="anonymous"
+        />
+        <style>
+            .form-check-input[disabled]:focus {
+                border-color: #e97984;
+                box-shadow: 0 0 0 0.25rem rgba(220, 53, 70, 0.25);
+            }
+
+            .form-check-input[disabled]:checked {
+                background-color: var(--bs-danger);
+                border-color: var(--bs-danger);
+            }
+        </style>
+    </head>
+
+    <body>
+        <div class="container" x-data="getAlpineData()">
+            <h3>Reserve seats</h3>
+
+            <p>
+                You are logged in as
+                <span x-text="userId" class="fst-italic"></span>
+            </p>
+
+            <template x-for="row in seats">
+                <div class="row">
+                    <template x-for="seat in row">
+                        <div class="col text-center">
+                            <input
+                                class="form-check-input"
+                                type="checkbox"
+                                x-model="seat.isReserved"
+                                x-on:change="handleSeatSelection"
+                                x-bind:disabled="seat.isReserved && !seat.isMine"
+                                x-bind:data-row="seat.row"
+                                x-bind:data-col="seat.col"
+                            />
+                        </div>
+                    </template>
+                </div>
+            </template>
+
+            <div class="my-3">
+                <button
+                    class="btn btn-primary"
+                    x-bind:disabled="selectedSeatCount === 0 || selectedSeatCount > 4"
+                    x-on:click="handleSubmit"
+                >
+                    Submit
+                </button>
+            </div>
+        </div>
+
+        <script
+            src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js"
+            integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM"
+            crossorigin="anonymous"
+        ></script>
+        <script
+            src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.7.0/jquery.min.js"
+            integrity="sha512-3gJwYpMe3QewGELv8k/BX9vcqhryRdzRMxVfq6ngyWXwo03GFEzjsUm8Q7RZcHPHksttq7/GFoxjCVUjkjvPdw=="
+            crossorigin="anonymous"
+            referrerpolicy="no-referrer"
+        ></script>
+        <script
+            src="https://unpkg.com/alpinejs@3.13.9/dist/cdn.min.js"
+            defer
+        ></script>
+
+        <script>
+            function getAlpineData() {
+                return {
+                    wsBaseUrl:
+                        'wss://lai8m7t5h8.execute-api.us-east-1.amazonaws.com/test',
+                    apiBaseUrl:
+                        'https://9c7opjnl3b.execute-api.us-east-1.amazonaws.com/test',
+
+                    userId: null,
+                    seats: [],
+                    ws: null,
+                    selectedSeatCount: 0,
+
+                    async init() {
+                        this.initUser();
+                        await this.initSeats();
+                        this.initWebSocket();
+                    },
+
+                    destroy() {
+                        if (this.ws) {
+                            this.ws.close();
+                        }
+                    },
+
+                    initUser() {
+                        this.userId =
+                            sessionStorage.getItem('userId') ??
+                            this.generateRandomString(5);
+                        sessionStorage.setItem('userId', this.userId);
+                    },
+
+                    generateRandomString(length) {
+                        const characters =
+                            'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789';
+                        let result = '';
+                        for (let i = 0; i < length; i++) {
+                            result += characters.charAt(
+                                Math.floor(Math.random() * characters.length)
+                            );
+                        }
+                        return result;
+                    },
+
+                    async initSeats() {
+                        const response = await fetch(
+                            `${this.apiBaseUrl}/seats?userId=${this.userId}`,
+                            { method: 'GET' }
+                        );
+                        this.seats = await response.json();
+                        this.selectedSeatCount = this.seats
+                            .flatMap((x) => x)
+                            .filter((x) => x.isMine).length;
+                    },
+
+                    initWebSocket() {
+                        const wsUrl = `${this.wsBaseUrl}/?userId=${this.userId}`;
+                        const ws = new WebSocket(wsUrl);
+
+                        ws.onopen = function () {
+                            console.log(
+                                'Websocket connection has been established.'
+                            );
+                        };
+
+                        ws.onerror = function (error) {
+                            console.error('Websocket error: ', error);
+                        };
+
+                        ws.onclose = function () {
+                            console.log(
+                                'Websocket connection has been closed.'
+                            );
+                        };
+
+                        ws.onmessage = this.handleServerMessage.bind(this);
+
+                        this.ws = ws;
+                    },
+
+                    handleServerMessage(message) {
+                        const data = JSON.parse(message.data);
+                        const { row, col } = data;
+                        const seat = this.seats[row][col];
+
+                        if (data.action === 'select') {
+                            seat.isReserved = true;
+                            seat.isMine = false;
+                        } else if (data.action === 'deselect') {
+                            seat.isReserved = false;
+                        }
+                    },
+
+                    handleSeatSelection(event) {
+                        const row = event.target.getAttribute('data-row');
+                        const col = event.target.getAttribute('data-col');
+
+                        this.seats[row][col].isMine = true;
+
+                        if (event.target.checked) {
+                            this.selectedSeatCount++;
+                        } else {
+                            this.selectedSeatCount--;
+                        }
+
+                        if (this.ws.readyState === WebSocket.OPEN) {
+                            const message = {
+                                action: event.target.checked
+                                    ? 'select'
+                                    : 'deselect',
+                                row,
+                                col,
+                            };
+                            this.ws.send(JSON.stringify(message));
+                        }
+                    },
+
+                    async handleSubmit() {
+                        const mySeats = this.seats
+                            .flatMap((x) => x)
+                            .filter((x) => x.isReserved && x.isMine)
+                            .map((x) => ({ row: x.row, col: x.col }));
+                        const response = await fetch(
+                            `${this.apiBaseUrl}/reserve`,
+                            {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                    userId: this.userId,
+                                    seats: mySeats,
+                                }),
+                            }
+                        );
+
+                        if (response.ok) {
+                            location.href = './success.html';
+                        }
+                    },
+                };
+            }
+        </script>
+    </body>
+</html>
